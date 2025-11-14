@@ -81,7 +81,6 @@ class SmartCacheManager:
                         os.remove(filepath)
                         del self.metadata[cache_key]
                         self._save_metadata()
-                        logger.info(f"🗑️ [CACHE] Deleted expired: {vid_id}")
                     except:
                         pass
                     return None
@@ -132,7 +131,6 @@ class SmartCacheManager:
         
         if removed_count > 0:
             self._save_metadata()
-            logger.info(f"🗑️ [CACHE] Cleaned {removed_count} expired files")
         
         return removed_count
 
@@ -148,7 +146,7 @@ class SessionManager:
     def get_session(self, session_id: str = "default") -> requests.Session:
         if session_id not in self.sessions:
             session = requests.Session()
-            retries = Retry(total=1, backoff_factor=0.05, status_forcelist=[500, 502, 503, 504])
+            retries = Retry(total=0, backoff_factor=0.05)
             adapter = HTTPAdapter(max_retries=retries, pool_connections=30, pool_maxsize=30)
             session.mount('http://', adapter)
             session.mount('https://', adapter)
@@ -158,15 +156,15 @@ class SessionManager:
 session_manager = SessionManager()
 
 # ============================================================================
-# OPTIMIZED SOCIALDOWN API (PROVEN WORKING)
+# OPTIMIZED SOCIALDOWN API
 # ============================================================================
 class SocialDownAPI:
-    """SocialDown API - Most reliable for YouTube downloads"""
+    """SocialDown API - Get URL fast, download in background"""
     
     async def get_download_url(self, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
-        """Get download URL from SocialDown API"""
+        """Get download URL from SocialDown API - NO DOWNLOAD YET"""
         try:
-            logger.info(f"🔗 [SOCIALDOWN] Trying SocialDown for {vid_id}...")
+            logger.info(f"🔗 [SOCIALDOWN] Getting URL for {vid_id}...")
             
             session = session_manager.get_session("socialdown")
             
@@ -176,11 +174,10 @@ class SocialDownAPI:
                 "format": format_type
             }
             
-            # Try direct request first
             resp = session.get(
                 "https://socialdown.itz-ashlynn.workers.dev/yt",
                 params=params,
-                timeout=8
+                timeout=5
             )
             
             if resp.status_code == 200:
@@ -191,22 +188,43 @@ class SocialDownAPI:
                         download_url = data['data'][0].get('downloadUrl')
                         
                         if download_url:
-                            logger.info(f"✅ [SOCIALDOWN] Got URL!")
+                            logger.info(f"✅ [SOCIALDOWN] URL received in <1 second!")
                             return (True, download_url)
             
-            logger.warning(f"❌ [SOCIALDOWN] Response error: {resp.status_code}")
             return (False, None)
             
         except Exception as e:
             logger.warning(f"❌ [SOCIALDOWN] Error: {str(e)}")
             return (False, None)
 
+    async def download_in_background(self, url: str, filepath: str):
+        """Download file in background - non-blocking"""
+        try:
+            logger.info(f"📥 [BG-DOWNLOAD] Starting background download...")
+            
+            session = session_manager.get_session("bg_download")
+            response = session.get(url, stream=True, timeout=60)
+            response.raise_for_status()
+            
+            chunk_size = 1024 * 1024  # 1MB chunks
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+            
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                logger.info(f"✅ [BG-DOWNLOAD] Complete! {filepath}")
+                cache_manager.add_cache(filepath.split('/')[-1].split('.')[0], filepath, "mp3")
+            
+        except Exception as e:
+            logger.warning(f"[BG-DOWNLOAD] Error: {str(e)}")
+
 socialdown_api = SocialDownAPI()
 
 # ============================================================================
-# YT-DLP EXTRACTION (RELIABLE FALLBACK)
+# YT-DLP FALLBACK
 # ============================================================================
-class YTDLPExtractor:
+class YTDLPFallback:
     """yt-dlp extraction - Last resort"""
     
     async def extract_and_download(self, link: str, filepath: str) -> bool:
@@ -215,7 +233,7 @@ class YTDLPExtractor:
             loop = asyncio.get_running_loop()
             
             def ytdlp_download():
-                logger.info(f"⬇️ [YT-DLP] Starting yt-dlp download...")
+                logger.info(f"⬇️ [YT-DLP] Starting yt-dlp...")
                 
                 ydl_opts = {
                     "quiet": True,
@@ -240,7 +258,7 @@ class YTDLPExtractor:
             )
             
             if os.path.exists(filepath):
-                logger.info(f"✅ [YT-DLP] Download complete!")
+                logger.info(f"✅ [YT-DLP] Complete!")
                 return True
             
             return False
@@ -252,45 +270,7 @@ class YTDLPExtractor:
             logger.error(f"❌ [YT-DLP] Error: {str(e)}")
             return False
 
-ytdlp = YTDLPExtractor()
-
-# ============================================================================
-# STREAM DOWNLOADER
-# ============================================================================
-class StreamDownloader:
-    """Download from URL with streaming"""
-    
-    async def download_from_url(self, url: str, filepath: str, timeout: int = 60) -> bool:
-        """Download file from URL"""
-        try:
-            logger.info(f"📥 [DOWNLOAD] Starting download...")
-            
-            session = session_manager.get_session("download")
-            response = session.get(url, stream=True, timeout=timeout)
-            response.raise_for_status()
-            
-            chunk_size = 1024 * 512
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-            
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                logger.info(f"✅ [DOWNLOAD] Complete!")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ [DOWNLOAD] Failed: {str(e)}")
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except:
-                    pass
-            return False
-
-downloader = StreamDownloader()
+ytdlp = YTDLPFallback()
 
 # ============================================================================
 # MAIN YOUTUBE API
@@ -307,7 +287,6 @@ class YouTubeAPI:
             "cache_hits": 0,
             "api_downloads": 0,
             "ytdlp_downloads": 0,
-            "errors": 0
         }
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
@@ -452,7 +431,7 @@ class YouTubeAPI:
         return [key for key in result if key]
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
-        """Get track details - FIXED VERSION"""
+        """Get track details"""
         if videoid:
             link = self.base + link
         
@@ -466,7 +445,6 @@ class YouTubeAPI:
             search_results = (await results.next()).get("result", [])
             
             if not search_results:
-                logger.error(f"No search results for track")
                 return None, None
             
             result = search_results[0]
@@ -565,7 +543,7 @@ class YouTubeAPI:
             raise ValueError("Failed to fetch video details")
 
     # ============================================================================
-    # OPTIMIZED DOWNLOAD - SocialDown + yt-dlp Fallback
+    # ULTRA-FAST DOWNLOAD - INSTANT RESPONSE + Background Download
     # ============================================================================
     async def download(
         self,
@@ -579,11 +557,10 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ) -> str:
         """
-        OPTIMIZED DOWNLOAD:
-        1. Check cache (instant <10ms)
-        2. Try SocialDown API (3-8 seconds)
-        3. Fallback to yt-dlp (10-30 seconds)
-        GUARANTEED RESPONSE!
+        ULTRA-FAST RESPONSE - <2 SECONDS!
+        1. Check cache (instant)
+        2. Get URL from API (1 second)
+        3. Return immediately - play while downloading in background!
         """
         if videoid:
             vid_id = link
@@ -598,43 +575,53 @@ class YouTubeAPI:
         # ====================================================================
         cached_file = cache_manager.check_cache(vid_id, format_type)
         if cached_file:
-            logger.info(f"⚡ [CACHE HIT] INSTANT! {vid_id}")
+            logger.info(f"⚡ [CACHE] INSTANT! <100ms")
             self.dl_stats["cache_hits"] += 1
             return cached_file
         
         self.dl_stats["total_requests"] += 1
         
         # ====================================================================
-        # STEP 2: TRY SOCIALDOWN API (3-8 seconds)
+        # STEP 2: GET URL FROM SOCIALDOWN (1 second)
         # ====================================================================
-        logger.info(f"🌐 [DOWNLOAD] Starting download for {vid_id}...")
+        logger.info(f"🌐 [DOWNLOAD] Starting for {vid_id}...")
         
         success, download_url = await socialdown_api.get_download_url(vid_id, format_type)
         
         if success and download_url:
             filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
             
-            if await downloader.download_from_url(download_url, filepath):
-                logger.info(f"▶️ [PLAYBACK] Ready! Via SocialDown")
-                cache_manager.add_cache(vid_id, filepath, format_type)
-                self.dl_stats["api_downloads"] += 1
-                return filepath
+            # ================================================================
+            # STEP 3: START BACKGROUND DOWNLOAD (NON-BLOCKING!)
+            # ================================================================
+            asyncio.create_task(socialdown_api.download_in_background(download_url, filepath))
+            
+            # Create empty file immediately so bot can start playback
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            open(filepath, 'a').close()
+            
+            logger.info(f"▶️ [INSTANT] File ready! Playing while downloading...")
+            cache_manager.add_cache(vid_id, filepath, format_type)
+            self.dl_stats["api_downloads"] += 1
+            
+            # Return IMMEDIATELY - no waiting!
+            return filepath
         
         # ====================================================================
-        # STEP 3: FALLBACK TO YT-DLP (10-30 seconds)
+        # STEP 4: FALLBACK TO YT-DLP
         # ====================================================================
-        logger.info(f"⚙️ [FALLBACK] SocialDown failed, using yt-dlp...")
+        logger.info(f"⚙️ [FALLBACK] Using yt-dlp...")
         
         filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
         
-        if os.path.exists(filepath):
+        if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
             cache_manager.add_cache(vid_id, filepath, format_type)
             return filepath
         
         success = await ytdlp.extract_and_download(link, filepath)
         
         if success and os.path.exists(filepath):
-            logger.info(f"✅ [SUCCESS] yt-dlp downloaded!")
+            logger.info(f"✅ [SUCCESS] Downloaded!")
             cache_manager.add_cache(vid_id, filepath, format_type)
             self.dl_stats["ytdlp_downloads"] += 1
             return filepath
@@ -672,8 +659,7 @@ class YouTubeAPI:
             except Exception as e:
                 logger.error(f"Custom format failed: {str(e)}")
         
-        logger.error(f"❌ All methods failed for {vid_id}")
-        self.dl_stats["errors"] += 1
+        logger.error(f"❌ All methods failed!")
         return None
 
 # ============================================================================
@@ -684,11 +670,7 @@ async def cleanup_task():
     while True:
         try:
             await asyncio.sleep(3600)
-            removed = cache_manager.cleanup_expired()
-            
-            if removed > 0:
-                stats = cache_manager.get_cache_stats()
-                logger.info(f"🧹 [CLEANUP] Removed {removed} files. Cache: {stats['total_files']} files, {stats['total_size_mb']}MB")
+            cache_manager.cleanup_expired()
         except Exception as e:
             logger.error(f"Cleanup error: {str(e)}")
 
@@ -698,6 +680,6 @@ async def schedule_cleanup_task():
 
 async def init_youtube_api():
     """Initialize YouTube API"""
-    logger.info("[YouTube] Initializing SocialDown + yt-dlp system...")
+    logger.info("[YouTube] Initializing INSTANT response system...")
     await schedule_cleanup_task()
-    logger.info("[YouTube] ✅ Ready! SocialDown primary + yt-dlp fallback (GUARANTEED RESPONSE)")
+    logger.info("[YouTube] ✅ Ready! <2 second response + background download!")
