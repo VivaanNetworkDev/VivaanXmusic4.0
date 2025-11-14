@@ -36,6 +36,12 @@ DEEP_API = getenv("DEEP_API")      # optional
 API_URL = getenv("API_URL")        # optional
 API_KEY = getenv("API_KEY", None) 
 
+# SocialDown API Settings
+SOCIALDOWN_BASE_URL = os.getenv(
+    "SOCIALDOWN_BASE_URL",
+    "https://socialdown.itz-ashlynn.workers.dev")
+SOCIALDOWN_TIMEOUT = int(os.getenv("SOCIALDOWN_TIMEOUT", "30"))
+
 # Vars For API End Pont.
 #YTPROXY_URL = getenv("YTPROXY_URL", 'https://t.me/EliteSid') .
 #YT_API_KEY = getenv("YT_API_KEY" , None ) ## Your API key like: xbit_10000000xx0233
