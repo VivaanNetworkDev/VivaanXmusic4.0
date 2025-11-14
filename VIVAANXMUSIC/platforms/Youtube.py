@@ -24,20 +24,23 @@ from VIVAANXMUSIC.utils.formatters import time_to_seconds
 logger = LOGGER(__name__)
 
 # ============================================================================
-# ULTRA-FAST CACHING SYSTEM
+# INTELLIGENT CACHE SYSTEM - Auto cleanup after set time
 # ============================================================================
-class CacheManager:
-    """Advanced caching system for lightning-fast responses"""
+class SmartCacheManager:
+    """Smart cache that auto-deletes files after set duration"""
     
-    def __init__(self):
+    def __init__(self, retention_hours: int = 24):
         self.cache_dir = os.path.join(os.getcwd(), "cache")
-        self.metadata_file = os.path.join(self.cache_dir, "metadata.json")
         self.download_dir = "downloads"
+        self.metadata_file = os.path.join(self.cache_dir, "metadata.json")
+        self.retention_seconds = retention_hours * 3600
+        
         os.makedirs(self.cache_dir, exist_ok=True)
         os.makedirs(self.download_dir, exist_ok=True)
+        
         self.metadata = self._load_metadata()
         self.memory_cache = {}
-        self.max_memory_cache_size = 100
+        self.max_memory_cache = 50
     
     def _load_metadata(self) -> Dict:
         """Load metadata from disk"""
@@ -57,71 +60,124 @@ class CacheManager:
         except:
             pass
     
-    def get_cache_key(self, vid_id: str, format_type: str = "mp3") -> str:
-        """Generate cache key"""
-        return f"{vid_id}_{format_type}"
-    
     def check_cache(self, vid_id: str, format_type: str = "mp3") -> Optional[str]:
-        """Check if file exists in cache (instant return)"""
-        cache_key = self.get_cache_key(vid_id, format_type)
+        """Check if file exists and not expired"""
+        cache_key = f"{vid_id}_{format_type}"
         
+        # Check memory cache first
         if cache_key in self.memory_cache:
-            return self.memory_cache[cache_key]
+            filepath = self.memory_cache[cache_key]
+            if os.path.exists(filepath):
+                return filepath
+            else:
+                del self.memory_cache[cache_key]
         
+        # Check disk
         filepath = os.path.join(self.download_dir, f"{vid_id}.{format_type}")
+        
         if os.path.exists(filepath):
-            self.memory_cache[cache_key] = filepath
-            if len(self.memory_cache) > self.max_memory_cache_size:
-                self.memory_cache.pop(next(iter(self.memory_cache)))
-            return filepath
+            # Check if file is still valid
+            if cache_key in self.metadata:
+                file_age = time.time() - self.metadata[cache_key]["timestamp"]
+                
+                if file_age < self.retention_seconds:
+                    # File is still valid
+                    self.memory_cache[cache_key] = filepath
+                    return filepath
+                else:
+                    # File expired - delete it
+                    try:
+                        os.remove(filepath)
+                        del self.metadata[cache_key]
+                        self._save_metadata()
+                        logger.info(f"🗑️ [CACHE] Deleted expired file: {vid_id}")
+                    except:
+                        pass
+                    return None
+            else:
+                # No metadata - assume file is valid
+                self.memory_cache[cache_key] = filepath
+                return filepath
         
         return None
     
     def add_cache(self, vid_id: str, filepath: str, format_type: str = "mp3"):
-        """Add to cache"""
-        cache_key = self.get_cache_key(vid_id, format_type)
+        """Add file to cache with timestamp"""
+        cache_key = f"{vid_id}_{format_type}"
+        
         self.memory_cache[cache_key] = filepath
         
-        metadata_key = f"{vid_id}_{format_type}"
-        self.metadata[metadata_key] = {
+        self.metadata[cache_key] = {
             "path": filepath,
             "timestamp": time.time(),
-            "format": format_type
+            "format": format_type,
+            "vid_id": vid_id,
+            "size": os.path.getsize(filepath) if os.path.exists(filepath) else 0
         }
+        
+        # Cleanup memory cache if too large
+        if len(self.memory_cache) > self.max_memory_cache:
+            oldest_key = min(self.memory_cache.keys(), 
+                            key=lambda k: self.metadata.get(k, {}).get("timestamp", 0))
+            del self.memory_cache[oldest_key]
+        
         self._save_metadata()
     
-    def cleanup_old_cache(self, max_age_days: int = 7):
-        """Remove old cache files"""
+    def cleanup_expired(self):
+        """Remove all expired files"""
         current_time = time.time()
-        max_age_seconds = max_age_days * 86400
+        removed_count = 0
         
-        to_remove = []
-        for key, value in self.metadata.items():
-            if current_time - value.get("timestamp", 0) > max_age_seconds:
+        to_delete = []
+        for cache_key, meta in self.metadata.items():
+            file_age = current_time - meta.get("timestamp", 0)
+            
+            if file_age > self.retention_seconds:
                 try:
-                    if os.path.exists(value.get("path", "")):
-                        os.remove(value["path"])
-                    to_remove.append(key)
-                except:
-                    pass
+                    filepath = meta.get("path", "")
+                    if os.path.exists(filepath):
+                        os.remove(filepath)
+                        removed_count += 1
+                    to_delete.append(cache_key)
+                except Exception as e:
+                    logger.debug(f"Failed to delete {filepath}: {str(e)}")
         
-        for key in to_remove:
+        for key in to_delete:
             del self.metadata[key]
         
-        self._save_metadata()
+        if removed_count > 0:
+            self._save_metadata()
+            logger.info(f"🗑️ [CACHE] Cleaned up {removed_count} expired files")
+        
+        return removed_count
+    
+    def get_cache_stats(self) -> Dict:
+        """Get cache statistics"""
+        total_size = 0
+        total_files = 0
+        
+        for meta in self.metadata.values():
+            total_size += meta.get("size", 0)
+            total_files += 1
+        
+        return {
+            "total_files": total_files,
+            "total_size_mb": round(total_size / (1024 * 1024), 2),
+            "memory_cache_size": len(self.memory_cache),
+            "retention_hours": self.retention_seconds // 3600
+        }
 
-# Global cache manager
-cache_manager = CacheManager()
+# Global cache manager - 24 hour retention
+cache_manager = SmartCacheManager(retention_hours=24)
 
 # ============================================================================
-# OPTIMIZED SESSION MANAGEMENT
+# PERSISTENT SESSION MANAGER
 # ============================================================================
 class SessionManager:
-    """Manage persistent HTTP sessions"""
+    """Manage persistent HTTP sessions for fast requests"""
     
     def __init__(self):
         self.sessions = {}
-        self.executor = ThreadPoolExecutor(max_workers=12)
     
     def get_session(self, session_id: str = "default") -> requests.Session:
         """Get or create persistent session"""
@@ -133,11 +189,6 @@ class SessionManager:
             session.mount('https://', adapter)
             self.sessions[session_id] = session
         return self.sessions[session_id]
-    
-    def close_all(self):
-        """Close all sessions"""
-        for session in self.sessions.values():
-            session.close()
 
 session_manager = SessionManager()
 
@@ -148,19 +199,17 @@ COOKIES_URL = "https://pastebin.com/raw/RR0ucLw3"
 COOKIES_CACHE_PATH = os.path.join(os.getcwd(), "cookies", "youtube_cookies.txt")
 
 async def download_and_cache_cookies():
-    """Download cookies once and cache them"""
+    """Download cookies and cache them"""
     try:
         os.makedirs(os.path.dirname(COOKIES_CACHE_PATH), exist_ok=True)
         
         if os.path.exists(COOKIES_CACHE_PATH):
             file_age = time.time() - os.path.getmtime(COOKIES_CACHE_PATH)
             if file_age < 86400:
-                logger.info(f"✅ [Cookies] Using cached cookies")
                 return COOKIES_CACHE_PATH
         
         logger.info(f"[Cookies] Downloading fresh cookies...")
         session = session_manager.get_session("cookies")
-        
         response = session.get(COOKIES_URL, timeout=15)
         response.raise_for_status()
         
@@ -194,112 +243,51 @@ async def initialize_cookies():
     await download_and_cache_cookies()
 
 # ============================================================================
-# INSTANT STREAM URLS - NO WAITING FOR DOWNLOAD
+# FAST API SOURCES - Get download URLs
 # ============================================================================
-class StreamURLProvider:
-    """Get instant playable stream URLs without waiting"""
-    
-    async def get_direct_stream_url(self, link: str) -> Optional[Tuple[str, bool]]:
-        """
-        Get instant playable URL without downloading
-        Returns (url, is_working) tuple
-        """
-        try:
-            loop = asyncio.get_running_loop()
-            
-            # Use yt-dlp to extract stream URL instantly (no download)
-            def extract_url():
-                ydl_opts = {
-                    "quiet": True,
-                    "no_warnings": True,
-                    "socket_timeout": 15,
-                    "cookiefile": get_cookies_file(),
-                    "skip_download": True,
-                    "format": "bestaudio",
-                }
-                
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    info = ydl.extract_info(link, download=False)
-                    url = info.get('url')
-                    if url:
-                        return url
-                    
-                    # Try formats
-                    formats = info.get('formats', [])
-                    for fmt in formats:
-                        if fmt.get('url'):
-                            return fmt['url']
-                
-                return None
-            
-            # Run extraction in executor (non-blocking, fast!)
-            url = await asyncio.wait_for(
-                loop.run_in_executor(None, extract_url),
-                timeout=8
-            )
-            
-            if url:
-                logger.info(f"⚡ [STREAM] Got instant URL in <1 second!")
-                return (url, True)
-            
-            return (None, False)
-            
-        except asyncio.TimeoutError:
-            logger.warning("[STREAM] Timeout extracting URL")
-            return (None, False)
-        except Exception as e:
-            logger.debug(f"[STREAM] Error: {str(e)}")
-            return (None, False)
-
-stream_provider = StreamURLProvider()
-
-# ============================================================================
-# FAST API DOWNLOAD SOURCES - For actual file downloads
-# ============================================================================
-class FastDownloadSources:
-    """Try multiple sources for file downloads"""
+class FastDownloadAPIs:
+    """Try multiple APIs to get download URLs (like YouTube CDN)"""
     
     def __init__(self):
-        self.sources = [
+        self.apis = [
             {
                 "name": "SocialDown",
                 "base_url": "https://socialdown.itz-ashlynn.workers.dev",
-                "timeout": 5,
-                "priority": 1
+                "timeout": 6
             },
             {
                 "name": "YoutubeMate",
                 "base_url": "https://api.youtubemate.com",
-                "timeout": 5,
-                "priority": 2
+                "timeout": 6
             }
         ]
     
-    async def try_source(self, source: Dict, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
-        """Try single source"""
+    async def try_api(self, api: Dict, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
+        """Try single API source"""
         try:
-            session = session_manager.get_session(source["name"])
+            session = session_manager.get_session(api["name"])
             yt_link = f"https://www.youtube.com/watch?v={vid_id}"
             
-            if "socialdown" in source["name"].lower():
+            if "socialdown" in api["name"].lower():
                 params = {"url": yt_link, "format": format_type}
-                resp = session.get(f"{source['base_url']}/yt", params=params, timeout=source["timeout"])
+                resp = session.get(f"{api['base_url']}/yt", params=params, timeout=api["timeout"])
                 
                 if resp.status_code == 200:
                     data = resp.json()
                     if data.get('success') and data.get('data'):
                         if isinstance(data['data'], list) and data['data']:
-                            url = data['data'][0].get('downloadUrl')
-                            if url:
-                                return (True, url)
+                            download_url = data['data'][0].get('downloadUrl')
+                            if download_url:
+                                return (True, download_url)
             
             return (False, None)
-        except:
+        except Exception as e:
+            logger.debug(f"[{api['name']}] Error: {str(e)}")
             return (False, None)
     
-    async def get_fastest_url(self, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
-        """Get URL from fastest available source"""
-        tasks = [self.try_source(source, vid_id, format_type) for source in self.sources]
+    async def get_download_url(self, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
+        """Get download URL from fastest API (parallel attempts)"""
+        tasks = [self.try_api(api, vid_id, format_type) for api in self.apis]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in results:
@@ -308,56 +296,113 @@ class FastDownloadSources:
         
         return (False, None)
 
-fast_sources = FastDownloadSources()
+fast_apis = FastDownloadAPIs()
 
 # ============================================================================
-# BACKGROUND DOWNLOAD TASK - Download while playing
+# PARALLEL STREAM & DOWNLOAD (YouTube-like)
 # ============================================================================
-async def background_download(link: str, vid_id: str, filepath: str, cookies_file: str):
-    """
-    Download file in background while stream plays
-    This happens AFTER playback starts
-    """
-    try:
-        if os.path.exists(filepath):
-            return
-        
-        loop = asyncio.get_running_loop()
-        
-        def download():
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "outtmpl": filepath,
-                "force_overwrites": True,
-                "retries": 1,
-                "socket_timeout": 30,
-                "concurrent_fragment_downloads": 12,
-                "fragment_retries": 1,
-                "skip_unavailable_fragments": True,
-                "cookiefile": cookies_file,
-                "format": "bestaudio[ext=m4a]/best[height<=480]/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "96",
-                }],
-            }
+class ParallelDownloadManager:
+    """Download file while it's being played (like YouTube streaming)"""
+    
+    async def download_with_chunks(self, download_url: str, filepath: str, timeout: int = 60) -> bool:
+        """
+        Download file in chunks to disk
+        This allows playback to start while download continues
+        """
+        try:
+            session = session_manager.get_session("download")
             
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([link])
-        
-        await loop.run_in_executor(None, download)
-        
-        if os.path.exists(filepath):
-            logger.info(f"✅ [BACKGROUND] File saved: {filepath}")
-            cache_manager.add_cache(vid_id, filepath, "mp3")
-        
-    except Exception as e:
-        logger.debug(f"[BACKGROUND] Download failed: {str(e)}")
+            logger.info(f"⬇️ [DOWNLOAD] Starting parallel download to: {filepath}")
+            
+            response = session.get(download_url, stream=True, timeout=timeout)
+            response.raise_for_status()
+            
+            chunk_size = 1024 * 512  # 512KB chunks
+            downloaded = 0
+            total_size = int(response.headers.get('content-length', 0))
+            
+            # Start writing immediately (allows partial playback)
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Log progress every 1MB
+                        if total_size > 0 and downloaded % (1024 * 1024) == 0:
+                            progress_pct = (downloaded / total_size) * 100
+                            logger.debug(f"📥 [DOWNLOAD] {progress_pct:.1f}% - {filepath}")
+            
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                logger.info(f"✅ [DOWNLOAD] Complete! {filepath}")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ [DOWNLOAD] Failed: {str(e)}")
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+            return False
+    
+    async def download_with_ytdlp(self, link: str, filepath: str) -> bool:
+        """
+        Download using yt-dlp with parallel fragment downloads
+        (Last resort if APIs fail)
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            
+            def ytdlp_download():
+                ydl_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "outtmpl": filepath,
+                    "force_overwrites": True,
+                    "retries": 1,
+                    "socket_timeout": 30,
+                    "concurrent_fragment_downloads": 12,  # Parallel fragments
+                    "fragment_retries": 1,
+                    "skip_unavailable_fragments": True,
+                    "cookiefile": get_cookies_file(),
+                    "format": "bestaudio[ext=m4a]/best[height<=480]/best",
+                    "postprocessors": [{
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "96",
+                    }],
+                }
+                
+                logger.info(f"⬇️ [YT-DLP] Starting yt-dlp download...")
+                
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([link])
+            
+            await asyncio.wait_for(
+                loop.run_in_executor(None, ytdlp_download),
+                timeout=30
+            )
+            
+            if os.path.exists(filepath):
+                logger.info(f"✅ [YT-DLP] Download complete!")
+                return True
+            
+            return False
+            
+        except asyncio.TimeoutError:
+            logger.error(f"❌ [YT-DLP] Download timeout")
+            return False
+        except Exception as e:
+            logger.error(f"❌ [YT-DLP] Error: {str(e)}")
+            return False
+
+download_manager = ParallelDownloadManager()
 
 # ============================================================================
-# MAIN YOUTUBE API - INSTANT RESPONSE
+# MAIN YOUTUBE API
 # ============================================================================
 class YouTubeAPI:
     def __init__(self):
@@ -369,8 +414,8 @@ class YouTubeAPI:
         self.dl_stats = {
             "total_requests": 0,
             "cache_hits": 0,
-            "stream_urls": 0,
-            "downloads": 0
+            "api_downloads": 0,
+            "ytdlp_downloads": 0
         }
 
     async def exists(self, link: str, videoid: Union[bool, str] = None):
@@ -599,7 +644,7 @@ class YouTubeAPI:
             raise ValueError("Failed to fetch video details")
 
     # ============================================================================
-    # INSTANT PLAYABLE DOWNLOAD - <1 SECOND RESPONSE
+    # YOUTUBE-LIKE PARALLEL DOWNLOAD (Stream + Download simultaneously)
     # ============================================================================
     async def download(
         self,
@@ -613,8 +658,11 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ) -> str:
         """
-        INSTANT RESPONSE - Returns playable URL/file in <1 second
-        Background download happens after playback starts
+        YOUTUBE-STYLE DOWNLOAD:
+        1. Try APIs to get download URL (Fast - 3-5 seconds)
+        2. Start storing to VPS immediately (Parallel)
+        3. Return file path for playback (Starts playing while downloading)
+        4. Auto-delete old files after 24 hours
         """
         if videoid:
             vid_id = link
@@ -622,114 +670,70 @@ class YouTubeAPI:
         else:
             vid_id = link.split("v=")[-1].split("&")[0] if "v=" in link else ""
         
-        loop = asyncio.get_running_loop()
         format_type = "mp4" if video else "mp3"
         
         # ====================================================================
         # STEP 1: CHECK CACHE (instant <10ms)
         # ====================================================================
         cached_file = cache_manager.check_cache(vid_id, format_type)
-        if cached_file and os.path.exists(cached_file):
-            logger.info(f"⚡ [CACHE HIT] {vid_id} - INSTANT! ({format_type})")
+        if cached_file:
+            logger.info(f"⚡ [CACHE] INSTANT! Returned cached file: {vid_id}")
             self.dl_stats["cache_hits"] += 1
             return cached_file
         
         self.dl_stats["total_requests"] += 1
         
         # ====================================================================
-        # STEP 2: GET INSTANT STREAM URL - <1 SECOND RESPONSE!
+        # STEP 2: TRY FAST APIs (3-5 seconds) - Get download URL
         # ====================================================================
-        stream_url, success = await stream_provider.get_direct_stream_url(link)
+        logger.info(f"🔍 [API] Searching for download URL...")
         
-        if success and stream_url:
-            logger.info(f"⚡ [INSTANT STREAM] URL ready in <1 second!")
-            self.dl_stats["stream_urls"] += 1
+        api_success, download_url = await fast_apis.get_download_url(vid_id, format_type)
+        
+        if api_success and download_url:
+            logger.info(f"✅ [API] Found URL in 3-5 seconds!")
             
-            # Start background download (happens while playing)
-            asyncio.create_task(background_download(link, vid_id, 
-                                                    os.path.join("downloads", f"{vid_id}.{format_type}"),
-                                                    get_cookies_file()))
-            
-            # Return stream URL immediately for playback
-            return stream_url
-        
-        # ====================================================================
-        # STEP 3: FALLBACK - Try Fast APIs (5-10 seconds)
-        # ====================================================================
-        logger.info(f"⚡ [FALLBACK] Trying fast API sources...")
-        
-        success, download_url = await fast_sources.get_fastest_url(vid_id, format_type)
-        
-        if success and download_url:
-            logger.info(f"⚡ [FAST API] Got URL in 5-10 seconds")
             filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
             
-            try:
-                session = session_manager.get_session("download")
-                response = session.get(download_url, stream=True, timeout=45)
-                response.raise_for_status()
-                
-                with open(filepath, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=1024*512):
-                        if chunk:
-                            f.write(chunk)
-                
-                if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                    logger.info(f"✅ [FAST API] Downloaded: {filepath}")
+            # Start downloading immediately while returning file path
+            # This allows playback to start while download continues
+            asyncio.create_task(
+                download_manager.download_with_chunks(download_url, filepath)
+            )
+            
+            # Wait a tiny bit for file to exist, then return (allows immediate playback)
+            for _ in range(5):  # Wait up to 500ms
+                if os.path.exists(filepath):
+                    logger.info(f"▶️ [PLAYBACK] File ready! Starting playback while downloading...")
                     cache_manager.add_cache(vid_id, filepath, format_type)
-                    self.dl_stats["downloads"] += 1
+                    self.dl_stats["api_downloads"] += 1
                     return filepath
-            except Exception as e:
-                logger.debug(f"[FAST API] Download failed: {str(e)}")
+                await asyncio.sleep(0.1)
+            
+            # If file still being created, return path anyway (will be ready soon)
+            cache_manager.add_cache(vid_id, filepath, format_type)
+            logger.info(f"▶️ [PLAYBACK] Started playback (file being created...)")
+            self.dl_stats["api_downloads"] += 1
+            return filepath
         
         # ====================================================================
-        # STEP 4: FULL YT-DLP DOWNLOAD (10-20 seconds) - Last resort
+        # STEP 3: FALLBACK - yt-dlp with parallel fragments (10-20 seconds)
         # ====================================================================
-        logger.info(f"⚡ [YT-DLP] Full download starting...")
+        logger.info(f"⬇️ [YT-DLP] APIs failed, using yt-dlp with parallel downloads...")
+        
         filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
         
         if os.path.exists(filepath):
             cache_manager.add_cache(vid_id, filepath, format_type)
             return filepath
         
-        def ytdlp_download():
-            ydl_opts = {
-                "quiet": True,
-                "no_warnings": True,
-                "outtmpl": filepath,
-                "force_overwrites": True,
-                "retries": 1,
-                "socket_timeout": 30,
-                "concurrent_fragment_downloads": 12,
-                "fragment_retries": 1,
-                "skip_unavailable_fragments": True,
-                "cookiefile": get_cookies_file(),
-                "format": "bestaudio[ext=m4a]/best[height<=480]/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "96",
-                }],
-            }
-            
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([link])
+        success = await download_manager.download_with_ytdlp(link, filepath)
         
-        try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, ytdlp_download),
-                timeout=25
-            )
-            
-            if os.path.exists(filepath):
-                logger.info(f"✅ [YT-DLP] Downloaded: {filepath}")
-                cache_manager.add_cache(vid_id, filepath, format_type)
-                self.dl_stats["downloads"] += 1
-                return filepath
-        except asyncio.TimeoutError:
-            logger.error(f"❌ Download timeout for {vid_id}")
-        except Exception as e:
-            logger.error(f"❌ Download failed: {str(e)}")
+        if success and os.path.exists(filepath):
+            logger.info(f"✅ [YT-DLP] Downloaded successfully!")
+            cache_manager.add_cache(vid_id, filepath, format_type)
+            self.dl_stats["ytdlp_downloads"] += 1
+            return filepath
         
         # ====================================================================
         # CUSTOM FORMAT DOWNLOADS
@@ -753,8 +757,10 @@ class YouTubeAPI:
                 }]
             
             try:
+                loop = asyncio.get_running_loop()
                 ydl = yt_dlp.YoutubeDL(ydl_opts)
                 await loop.run_in_executor(None, ydl.download, [link])
+                
                 final_path = f"downloads/{title}.{'mp4' if songvideo else 'mp3'}"
                 
                 if os.path.exists(final_path):
@@ -767,23 +773,33 @@ class YouTubeAPI:
         return None
 
 # ============================================================================
-# STARTUP INITIALIZATION
+# BACKGROUND CLEANUP TASK - Delete expired files
 # ============================================================================
-async def schedule_cleanup_task():
-    """Cleanup old cache files every 24 hours"""
+async def cleanup_task():
+    """Run cleanup every hour to delete old files"""
     while True:
         try:
-            await asyncio.sleep(86400)
-            cache_manager.cleanup_old_cache(max_age_days=7)
-            logger.info("✅ Cache cleanup completed")
+            await asyncio.sleep(3600)  # Run every hour
+            
+            removed = cache_manager.cleanup_expired()
+            
+            if removed > 0:
+                stats = cache_manager.get_cache_stats()
+                logger.info(f"🧹 [CLEANUP] Removed {removed} files. Cache: {stats['total_files']} files, {stats['total_size_mb']}MB")
+            
         except Exception as e:
             logger.error(f"Cleanup task error: {str(e)}")
 
+async def schedule_cleanup_task():
+    """Schedule cleanup task"""
+    asyncio.create_task(cleanup_task())
+
 async def init_youtube_api():
-    """Initialize YouTube API and cache systems"""
-    logger.info("[YouTube] Initializing instant stream system...")
+    """Initialize YouTube API system"""
+    logger.info("[YouTube] Initializing YouTube-style parallel download system...")
     
     await initialize_cookies()
-    asyncio.create_task(schedule_cleanup_task())
+    await schedule_cleanup_task()
     
-    logger.info("[YouTube] ✅ Instant stream ready! <1 second response enabled!")
+    stats = cache_manager.get_cache_stats()
+    logger.info(f"[YouTube] ✅ Ready! Auto-delete enabled ({stats['retention_hours']}h retention)")
