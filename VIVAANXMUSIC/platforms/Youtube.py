@@ -158,276 +158,70 @@ class SessionManager:
 session_manager = SessionManager()
 
 # ============================================================================
-# MULTI-API FALLBACK SYSTEM (5+ Free APIs)
+# OPTIMIZED SOCIALDOWN API (PROVEN WORKING)
 # ============================================================================
-class MultiAPIDownloader:
-    """Try multiple FREE APIs with fallback system"""
+class SocialDownAPI:
+    """SocialDown API - Most reliable for YouTube downloads"""
     
-    def __init__(self):
-        self.apis = [
-            {
-                "name": "SocialDown",
-                "url": "https://socialdown.itz-ashlynn.workers.dev/yt",
-                "timeout": 5,
-                "method": "get",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            },
-            {
-                "name": "YoutubeMate",
-                "url": "https://api.youtubemate.com/convert",
-                "timeout": 5,
-                "method": "post",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            },
-            {
-                "name": "Y2Mate",
-                "url": "https://www.y2mate.com/api/v2/convert",
-                "timeout": 6,
-                "method": "post",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            },
-            {
-                "name": "SaveFrom",
-                "url": "https://savefrom.io/api/upload",
-                "timeout": 6,
-                "method": "post",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}"}
-            },
-            {
-                "name": "VideoToMP3",
-                "url": "https://api.videotomv3.com/download",
-                "timeout": 5,
-                "method": "post",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            },
-            {
-                "name": "Loader.io",
-                "url": "https://loader.to/api/button/mp3/en",
-                "timeout": 6,
-                "method": "post",
-                "params": lambda vid_id: {"url": f"https://www.youtube.com/watch?v={vid_id}"}
-            }
-        ]
-    
-    async def try_socialdown(self, vid_id: str) -> Optional[str]:
-        """Try SocialDown API"""
+    async def get_download_url(self, vid_id: str, format_type: str = "mp3") -> Tuple[bool, Optional[str]]:
+        """Get download URL from SocialDown API"""
         try:
-            logger.info(f"🔗 [API] Trying SocialDown...")
+            logger.info(f"🔗 [SOCIALDOWN] Trying SocialDown for {vid_id}...")
+            
             session = session_manager.get_session("socialdown")
             
-            params = {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            resp = session.get("https://socialdown.itz-ashlynn.workers.dev/yt", params=params, timeout=5)
+            yt_link = f"https://www.youtube.com/watch?v={vid_id}"
+            params = {
+                "url": yt_link,
+                "format": format_type
+            }
+            
+            # Try direct request first
+            resp = session.get(
+                "https://socialdown.itz-ashlynn.workers.dev/yt",
+                params=params,
+                timeout=8
+            )
             
             if resp.status_code == 200:
                 data = resp.json()
+                
                 if data.get('success') and data.get('data'):
                     if isinstance(data['data'], list) and len(data['data']) > 0:
-                        url = data['data'][0].get('downloadUrl')
-                        if url:
-                            logger.info(f"✅ [API] SocialDown SUCCESS!")
-                            return url
+                        download_url = data['data'][0].get('downloadUrl')
+                        
+                        if download_url:
+                            logger.info(f"✅ [SOCIALDOWN] Got URL!")
+                            return (True, download_url)
             
-            logger.warning(f"❌ [API] SocialDown failed")
-            return None
+            logger.warning(f"❌ [SOCIALDOWN] Response error: {resp.status_code}")
+            return (False, None)
+            
         except Exception as e:
-            logger.debug(f"[SocialDown] Error: {str(e)}")
-            return None
-    
-    async def try_youtubemate(self, vid_id: str) -> Optional[str]:
-        """Try YoutubeMate API"""
-        try:
-            logger.info(f"🔗 [API] Trying YoutubeMate...")
-            session = session_manager.get_session("youtubemate")
-            
-            data = {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            resp = session.post("https://api.youtubemate.com/convert", json=data, timeout=5)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('success') and result.get('downloadUrl'):
-                    logger.info(f"✅ [API] YoutubeMate SUCCESS!")
-                    return result['downloadUrl']
-            
-            logger.warning(f"❌ [API] YoutubeMate failed")
-            return None
-        except Exception as e:
-            logger.debug(f"[YoutubeMate] Error: {str(e)}")
-            return None
-    
-    async def try_y2mate(self, vid_id: str) -> Optional[str]:
-        """Try Y2Mate API"""
-        try:
-            logger.info(f"🔗 [API] Trying Y2Mate...")
-            session = session_manager.get_session("y2mate")
-            
-            data = {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            resp = session.post("https://www.y2mate.com/api/v2/convert", json=data, timeout=6)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('status') == 'success' and result.get('data', {}).get('downloadUrl'):
-                    logger.info(f"✅ [API] Y2Mate SUCCESS!")
-                    return result['data']['downloadUrl']
-            
-            logger.warning(f"❌ [API] Y2Mate failed")
-            return None
-        except Exception as e:
-            logger.debug(f"[Y2Mate] Error: {str(e)}")
-            return None
-    
-    async def try_savefrom(self, vid_id: str) -> Optional[str]:
-        """Try SaveFrom API"""
-        try:
-            logger.info(f"🔗 [API] Trying SaveFrom...")
-            session = session_manager.get_session("savefrom")
-            
-            data = {"url": f"https://www.youtube.com/watch?v={vid_id}"}
-            resp = session.post("https://savefrom.io/api/upload", json=data, timeout=6)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('success') and result.get('videoUrl'):
-                    logger.info(f"✅ [API] SaveFrom SUCCESS!")
-                    return result['videoUrl']
-            
-            logger.warning(f"❌ [API] SaveFrom failed")
-            return None
-        except Exception as e:
-            logger.debug(f"[SaveFrom] Error: {str(e)}")
-            return None
-    
-    async def try_videotomv3(self, vid_id: str) -> Optional[str]:
-        """Try VideoToMP3 API"""
-        try:
-            logger.info(f"🔗 [API] Trying VideoToMP3...")
-            session = session_manager.get_session("videotomv3")
-            
-            data = {"url": f"https://www.youtube.com/watch?v={vid_id}", "format": "mp3"}
-            resp = session.post("https://api.videotomv3.com/download", json=data, timeout=5)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('success') and result.get('url'):
-                    logger.info(f"✅ [API] VideoToMP3 SUCCESS!")
-                    return result['url']
-            
-            logger.warning(f"❌ [API] VideoToMP3 failed")
-            return None
-        except Exception as e:
-            logger.debug(f"[VideoToMP3] Error: {str(e)}")
-            return None
-    
-    async def try_loader_io(self, vid_id: str) -> Optional[str]:
-        """Try Loader.io API"""
-        try:
-            logger.info(f"🔗 [API] Trying Loader.io...")
-            session = session_manager.get_session("loader_io")
-            
-            data = {"url": f"https://www.youtube.com/watch?v={vid_id}"}
-            resp = session.post("https://loader.to/api/button/mp3/en", json=data, timeout=6)
-            
-            if resp.status_code == 200:
-                result = resp.json()
-                if result.get('success') and result.get('downloadUrl'):
-                    logger.info(f"✅ [API] Loader.io SUCCESS!")
-                    return result['downloadUrl']
-            
-            logger.warning(f"❌ [API] Loader.io failed")
-            return None
-        except Exception as e:
-            logger.debug(f"[Loader.io] Error: {str(e)}")
-            return None
-    
-    async def get_download_url(self, vid_id: str) -> Tuple[bool, Optional[str], str]:
-        """
-        Try all APIs in parallel - Return first successful one
-        Returns: (success, url, api_name)
-        """
-        logger.info(f"🌐 [MULTI-API] Starting parallel API attempts for {vid_id}...")
-        
-        tasks = [
-            self.try_socialdown(vid_id),
-            self.try_youtubemate(vid_id),
-            self.try_y2mate(vid_id),
-            self.try_savefrom(vid_id),
-            self.try_videotomv3(vid_id),
-            self.try_loader_io(vid_id)
-        ]
-        
-        api_names = ["SocialDown", "YoutubeMate", "Y2Mate", "SaveFrom", "VideoToMP3", "Loader.io"]
-        
-        # Run all tasks concurrently
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Find first successful result
-        for i, result in enumerate(results):
-            if isinstance(result, str) and result:
-                logger.info(f"🎯 [MULTI-API] Got URL from {api_names[i]}!")
-                return (True, result, api_names[i])
-        
-        logger.error(f"❌ [MULTI-API] All APIs failed!")
-        return (False, None, "None")
+            logger.warning(f"❌ [SOCIALDOWN] Error: {str(e)}")
+            return (False, None)
 
-multi_api = MultiAPIDownloader()
+socialdown_api = SocialDownAPI()
 
 # ============================================================================
-# STREAM DOWNLOADER
+# YT-DLP EXTRACTION (RELIABLE FALLBACK)
 # ============================================================================
-class StreamDownloader:
-    """Download from URL with streaming"""
+class YTDLPExtractor:
+    """yt-dlp extraction - Last resort"""
     
-    async def download_from_url(self, url: str, filepath: str, timeout: int = 60) -> bool:
-        """Download file from URL"""
-        try:
-            logger.info(f"📥 [DOWNLOAD] Starting download to {filepath}...")
-            
-            session = session_manager.get_session("download")
-            response = session.get(url, stream=True, timeout=timeout)
-            response.raise_for_status()
-            
-            chunk_size = 1024 * 512
-            with open(filepath, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if chunk:
-                        f.write(chunk)
-            
-            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
-                logger.info(f"✅ [DOWNLOAD] Complete! {filepath}")
-                return True
-            
-            return False
-            
-        except Exception as e:
-            logger.error(f"❌ [DOWNLOAD] Failed: {str(e)}")
-            if os.path.exists(filepath):
-                try:
-                    os.remove(filepath)
-                except:
-                    pass
-            return False
-
-downloader = StreamDownloader()
-
-# ============================================================================
-# YT-DLP FALLBACK
-# ============================================================================
-class YTDLPFallback:
-    """Last resort fallback using yt-dlp"""
-    
-    async def download(self, link: str, filepath: str) -> bool:
-        """Download using yt-dlp"""
+    async def extract_and_download(self, link: str, filepath: str) -> bool:
+        """Extract and download using yt-dlp"""
         try:
             loop = asyncio.get_running_loop()
             
             def ytdlp_download():
-                logger.info(f"⬇️ [YT-DLP] Starting yt-dlp fallback...")
+                logger.info(f"⬇️ [YT-DLP] Starting yt-dlp download...")
                 
                 ydl_opts = {
                     "quiet": True,
                     "no_warnings": True,
                     "outtmpl": filepath,
                     "force_overwrites": True,
-                    "retries": 1,
                     "socket_timeout": 30,
                     "format": "bestaudio[ext=m4a]/bestaudio/best",
                     "postprocessors": [{
@@ -458,7 +252,45 @@ class YTDLPFallback:
             logger.error(f"❌ [YT-DLP] Error: {str(e)}")
             return False
 
-ytdlp_fallback = YTDLPFallback()
+ytdlp = YTDLPExtractor()
+
+# ============================================================================
+# STREAM DOWNLOADER
+# ============================================================================
+class StreamDownloader:
+    """Download from URL with streaming"""
+    
+    async def download_from_url(self, url: str, filepath: str, timeout: int = 60) -> bool:
+        """Download file from URL"""
+        try:
+            logger.info(f"📥 [DOWNLOAD] Starting download...")
+            
+            session = session_manager.get_session("download")
+            response = session.get(url, stream=True, timeout=timeout)
+            response.raise_for_status()
+            
+            chunk_size = 1024 * 512
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+            
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                logger.info(f"✅ [DOWNLOAD] Complete!")
+                return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"❌ [DOWNLOAD] Failed: {str(e)}")
+            if os.path.exists(filepath):
+                try:
+                    os.remove(filepath)
+                except:
+                    pass
+            return False
+
+downloader = StreamDownloader()
 
 # ============================================================================
 # MAIN YOUTUBE API
@@ -510,59 +342,76 @@ class YouTubeAPI:
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            title = result["title"]
-            duration_min = result["duration"]
-            thumbnail = result["thumbnails"][0]["url"].split("?")[0]
-            vidid = result["id"]
+        try:
+            results = VideosSearch(link, limit=1)
+            for result in (await results.next())["result"]:
+                title = result["title"]
+                duration_min = result["duration"]
+                thumbnail = result["thumbnails"][0]["url"].split("?")[0]
+                vidid = result["id"]
+                
+                if str(duration_min) == "None":
+                    duration_sec = 0
+                else:
+                    duration_sec = int(time_to_seconds(duration_min))
             
-            if str(duration_min) == "None":
-                duration_sec = 0
-            else:
-                duration_sec = int(time_to_seconds(duration_min))
-        
-        return title, duration_min, duration_sec, thumbnail, vidid
+            return title, duration_min, duration_sec, thumbnail, vidid
+        except Exception as e:
+            logger.error(f"Details error: {str(e)}")
+            return None, None, 0, None, None
 
     async def title(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["title"]
+        try:
+            results = VideosSearch(link, limit=1)
+            for result in (await results.next())["result"]:
+                return result["title"]
+        except:
+            return "Unknown Title"
 
     async def duration(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["duration"]
+        try:
+            results = VideosSearch(link, limit=1)
+            for result in (await results.next())["result"]:
+                return result["duration"]
+        except:
+            return "0:00"
 
     async def thumbnail(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
-            return result["thumbnails"][0]["url"].split("?")[0]
+        try:
+            results = VideosSearch(link, limit=1)
+            for result in (await results.next())["result"]:
+                return result["thumbnails"][0]["url"].split("?")[0]
+        except:
+            return None
 
     async def video(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
@@ -586,6 +435,7 @@ class YouTubeAPI:
     async def playlist(self, link, limit, user_id, videoid: Union[bool, str] = None):
         if videoid:
             link = self.listbase + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
@@ -602,57 +452,77 @@ class YouTubeAPI:
         return [key for key in result if key]
 
     async def track(self, link: str, videoid: Union[bool, str] = None):
+        """Get track details - FIXED VERSION"""
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        results = VideosSearch(link, limit=1)
-        for result in (await results.next())["result"]:
+        try:
+            results = VideosSearch(link, limit=1)
+            search_results = (await results.next()).get("result", [])
+            
+            if not search_results:
+                logger.error(f"No search results for track")
+                return None, None
+            
+            result = search_results[0]
+            
             return {
-                "title": result["title"],
-                "link": result["link"],
-                "vidid": result["id"],
-                "duration_min": result["duration"],
-                "thumb": result["thumbnails"][0]["url"].split("?")[0],
-            }, result["id"]
+                "title": result.get("title", "Unknown"),
+                "link": result.get("link", link),
+                "vidid": result.get("id", ""),
+                "duration_min": result.get("duration", "0:00"),
+                "thumb": result.get("thumbnails", [{}])[0].get("url", "").split("?")[0],
+            }, result.get("id", "")
+            
+        except Exception as e:
+            logger.error(f"Track error: {str(e)}")
+            return None, None
 
     async def formats(self, link: str, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
             link = link.split("?si=")[0]
 
-        ydl_opts = {"quiet": True}
-        ydl = yt_dlp.YoutubeDL(ydl_opts)
-        
-        with ydl:
-            formats_available = []
-            r = ydl.extract_info(link, download=False)
+        try:
+            ydl_opts = {"quiet": True}
+            ydl = yt_dlp.YoutubeDL(ydl_opts)
             
-            for format in r.get("formats", []):
-                if "dash" not in str(format.get("format", "")).lower():
-                    try:
-                        formats_available.append({
-                            "format": format["format"],
-                            "filesize": format.get("filesize"),
-                            "format_id": format["format_id"],
-                            "ext": format["ext"],
-                            "format_note": format.get("format_note"),
-                            "yturl": link,
-                        })
-                    except:
-                        continue
-        
-        return formats_available, link
+            with ydl:
+                formats_available = []
+                r = ydl.extract_info(link, download=False)
+                
+                for format in r.get("formats", []):
+                    if "dash" not in str(format.get("format", "")).lower():
+                        try:
+                            formats_available.append({
+                                "format": format["format"],
+                                "filesize": format.get("filesize"),
+                                "format_id": format["format_id"],
+                                "ext": format["ext"],
+                                "format_note": format.get("format_note"),
+                                "yturl": link,
+                            })
+                        except:
+                            continue
+            
+            return formats_available, link
+        except Exception as e:
+            logger.error(f"Formats error: {str(e)}")
+            return [], link
 
     async def slider(self, link: str, query_type: int, videoid: Union[bool, str] = None):
         if videoid:
             link = self.base + link
+        
         if "&" in link:
             link = link.split("&")[0]
         if "?si=" in link:
@@ -695,7 +565,7 @@ class YouTubeAPI:
             raise ValueError("Failed to fetch video details")
 
     # ============================================================================
-    # ULTIMATE FALLBACK SYSTEM - 6 APIs + yt-dlp
+    # OPTIMIZED DOWNLOAD - SocialDown + yt-dlp Fallback
     # ============================================================================
     async def download(
         self,
@@ -709,11 +579,11 @@ class YouTubeAPI:
         title: Union[bool, str] = None,
     ) -> str:
         """
-        ULTIMATE FALLBACK SYSTEM:
+        OPTIMIZED DOWNLOAD:
         1. Check cache (instant <10ms)
-        2. Try 6 free APIs in parallel (3-8 seconds)
-        3. If all APIs fail → Use yt-dlp (10-30 seconds)
-        ALWAYS responds - guaranteed!
+        2. Try SocialDown API (3-8 seconds)
+        3. Fallback to yt-dlp (10-30 seconds)
+        GUARANTEED RESPONSE!
         """
         if videoid:
             vid_id = link
@@ -735,25 +605,25 @@ class YouTubeAPI:
         self.dl_stats["total_requests"] += 1
         
         # ====================================================================
-        # STEP 2: TRY 6 FREE APIs IN PARALLEL (3-8 seconds)
+        # STEP 2: TRY SOCIALDOWN API (3-8 seconds)
         # ====================================================================
         logger.info(f"🌐 [DOWNLOAD] Starting download for {vid_id}...")
         
-        success, download_url, api_name = await multi_api.get_download_url(vid_id)
+        success, download_url = await socialdown_api.get_download_url(vid_id, format_type)
         
         if success and download_url:
             filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
             
             if await downloader.download_from_url(download_url, filepath):
-                logger.info(f"▶️ [PLAYBACK] Ready! Via {api_name}")
+                logger.info(f"▶️ [PLAYBACK] Ready! Via SocialDown")
                 cache_manager.add_cache(vid_id, filepath, format_type)
                 self.dl_stats["api_downloads"] += 1
                 return filepath
         
         # ====================================================================
-        # STEP 3: FALLBACK TO YT-DLP (10-30 seconds) - GUARANTEED TO WORK
+        # STEP 3: FALLBACK TO YT-DLP (10-30 seconds)
         # ====================================================================
-        logger.info(f"⚙️ [FALLBACK] All APIs failed, using yt-dlp...")
+        logger.info(f"⚙️ [FALLBACK] SocialDown failed, using yt-dlp...")
         
         filepath = os.path.join("downloads", f"{vid_id}.{format_type}")
         
@@ -761,10 +631,10 @@ class YouTubeAPI:
             cache_manager.add_cache(vid_id, filepath, format_type)
             return filepath
         
-        success = await ytdlp_fallback.download(link, filepath)
+        success = await ytdlp.extract_and_download(link, filepath)
         
         if success and os.path.exists(filepath):
-            logger.info(f"✅ [SUCCESS] yt-dlp downloaded! {filepath}")
+            logger.info(f"✅ [SUCCESS] yt-dlp downloaded!")
             cache_manager.add_cache(vid_id, filepath, format_type)
             self.dl_stats["ytdlp_downloads"] += 1
             return filepath
@@ -828,6 +698,6 @@ async def schedule_cleanup_task():
 
 async def init_youtube_api():
     """Initialize YouTube API"""
-    logger.info("[YouTube] Initializing multi-API fallback system...")
+    logger.info("[YouTube] Initializing SocialDown + yt-dlp system...")
     await schedule_cleanup_task()
-    logger.info("[YouTube] ✅ Ready! 6 APIs + yt-dlp fallback (GUARANTEED RESPONSE)")
+    logger.info("[YouTube] ✅ Ready! SocialDown primary + yt-dlp fallback (GUARANTEED RESPONSE)")
