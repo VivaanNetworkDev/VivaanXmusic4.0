@@ -284,7 +284,7 @@ extractor = DirectYTDLPExtractor()
 # ============================================================================
 # COOKIES SETUP (Optional - for fallback)
 # ============================================================================
-COOKIES_URL = "https://pastebin.com/JGVM11Dm"
+COOKIES_URL = "https://pastebin.com/raw/rLsBhAQa"
 COOKIES_CACHE_PATH = os.path.join(os.getcwd(), "cookies", "youtube_cookies.txt")
 
 async def download_and_cache_cookies():
